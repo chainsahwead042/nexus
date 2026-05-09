@@ -1,0 +1,98 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and system settings",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "githubToken": { "type": "string", "description": "Encrypted or secure GitHub Personal Access Token" },
+        "whatsappApiKey": { "type": "string" },
+        "instagramApiKey": { "type": "string" },
+        "gmailToken": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email"]
+    },
+    "Integration": {
+      "title": "Integration",
+      "description": "Connection details for external platforms",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "platform": { "type": "string", "enum": ["whatsapp", "instagram", "email"] },
+        "status": { "type": "string", "enum": ["connected", "disconnected", "error"] },
+        "lastSync": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "platform"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Incoming message from any platform",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "platform": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "content": { "type": "string" },
+        "category": { "type": "string", "enum": ["client", "relative", "undetermined"] },
+        "isNewClient": { "type": "boolean" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "processedByAI": { "type": "boolean" },
+        "aiResponse": { "type": "string" }
+      },
+      "required": ["userId", "content", "platform"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "Client profile tracked by the system",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "platformId": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["individual", "business"] },
+        "githubRepo": { "type": "string" },
+        "lastInteraction": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Automated coding or response task",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "messageId": { "type": "string" },
+        "requirements": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "analyzing", "executing", "completed", "failed"] },
+        "githubPrUrl": { "type": "string" },
+        "errorLog": { "type": "string" },
+        "executionCount": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/users/{userId}/integrations/{integrationId}": {
+      "schema": "Integration",
+      "description": "User platform integrations"
+    },
+    "/users/{userId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "User messages"
+    },
+    "/users/{userId}/clients/{clientId}": {
+      "schema": "Client",
+      "description": "User clients"
+    },
+    "/users/{userId}/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "AI execution tasks"
+    }
+  }
+}

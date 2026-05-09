@@ -1,0 +1,86 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 1. Core Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 2. Validation Blueprints
+    function isValidMessage(data) {
+      return data.userId == request.auth.uid 
+        && data.content is string && data.content.size() <= 5000
+        && data.platform in ['whatsapp', 'instagram', 'email']
+        && data.category in ['client', 'relative', 'undetermined'];
+    }
+
+    function isValidTask(data) {
+      return data.userId == request.auth.uid
+        && data.requirements is string && data.requirements.size() <= 10000
+        && data.status in ['analyzing', 'executing', 'completed', 'failed'];
+    }
+
+    // 3. Match Blocks
+    match /users/{userId} {
+      // User Profile Management
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow create: if isOwner(userId) && isValidId(userId);
+      allow update: if isOwner(userId) && (
+         incoming().diff(existing()).affectedKeys().hasOnly([
+           'githubToken', 'whatsappKey', 'whatsappPhone', 'instaKey', 
+           'emailUser', 'emailPass', 'updatedAt'
+         ])
+      );
+
+      // Unified Message Stream
+      match /messages/{messageId} {
+        // Pillar 8 Security: Check resource data for list
+        allow list: if isOwner(userId); 
+        allow get: if isOwner(userId) && isValidId(messageId);
+        allow create: if isOwner(userId) && isValidMessage(incoming());
+        allow update: if isOwner(userId) && (
+          // Allow updating status/taskId
+          incoming().diff(existing()).affectedKeys().hasOnly(['taskId', 'processedByAI', 'timestamp'])
+        );
+        allow delete: if isOwner(userId);
+      }
+
+      // AI Execution Tasks
+      match /tasks/{taskId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId) && isValidId(taskId);
+        allow create: if isOwner(userId) && isValidTask(incoming());
+        allow update: if isOwner(userId) && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'executionCount', 'githubPrUrl', 'timestamp'])
+        );
+        allow delete: if isOwner(userId);
+      }
+
+      // Integration Keys
+      match /integrations/{integrationId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+  }
+}
