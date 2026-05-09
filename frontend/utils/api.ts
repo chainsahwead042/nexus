@@ -1,14 +1,17 @@
 import axios from "axios";
-
-// This will allow you to set the backend URL in Vercel/Netlify/Render environment variables
-// Use VITE_API_URL=https://your-backend-url.render.com
-const API_BASE_URL = import.meta.env.VITE_API_URL || "";
+import { auth } from "../../backend/lib/firebase";
 
 const api = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
+  baseURL: (import.meta as any).env?.VITE_API_URL || "/api",
+  headers: { "Content-Type": "application/json" },
+});
+
+api.interceptors.request.use((config) => {
+  const user = auth.currentUser;
+  if (user) {
+    config.headers["x-user-id"] = user.uid;
+  }
+  return config;
 });
 
 export default api;

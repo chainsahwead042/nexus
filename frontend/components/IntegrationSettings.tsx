@@ -1,194 +1,264 @@
-import { Github, Mail, Instagram, MessageCircle, Link, Check, ExternalLink, Save, Loader2 } from "lucide-react";
+import { Github, Mail, MessageCircle, Instagram, Send, Save, Loader2, Check, RefreshCw, AlertCircle } from "lucide-react";
 import { motion } from "motion/react";
 import { useState, useEffect } from "react";
-import { doc, getDoc, setDoc } from "firebase/firestore";
-import { db } from "../../backend/lib/firebase";
-import { useAuth } from "../../backend/lib/AuthContext";
+import api from "../utils/api";
+
+interface PlatformStatus {
+  hasGithub: boolean;
+  hasTelegram: boolean;
+  hasWhatsapp: boolean;
+  hasInstagram: boolean;
+  hasEmail: boolean;
+  emailUser: string;
+  imapHost: string;
+  whatsappPhoneId: string;
+}
+
+interface SyncState {
+  [key: string]: "idle" | "syncing" | "done" | "error";
+}
 
 export function IntegrationSettings() {
-  const { user } = useAuth();
+  const [status, setStatus] = useState<PlatformStatus | null>(null);
   const [githubToken, setGithubToken] = useState("");
-  const [whatsappKey, setWhatsappKey] = useState("");
-  const [whatsappPhone, setWhatsappPhone] = useState("");
-  const [instaKey, setInstaKey] = useState("");
+  const [telegramToken, setTelegramToken] = useState("");
+  const [whatsappPhoneId, setWhatsappPhoneId] = useState("");
+  const [whatsappToken, setWhatsappToken] = useState("");
+  const [instaToken, setInstaToken] = useState("");
   const [emailUser, setEmailUser] = useState("");
   const [emailPass, setEmailPass] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
-  const [isSaved, setIsSaved] = useState(false);
+  const [imapHost, setImapHost] = useState("imap.gmail.com");
+  const [saving, setSaving] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [syncState, setSyncState] = useState<SyncState>({});
 
   useEffect(() => {
-    if (!user) return;
-    getDoc(doc(db, "users", user.uid)).then((snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setGithubToken(data.githubToken || "");
-        setWhatsappKey(data.whatsappKey || "");
-        setWhatsappPhone(data.whatsappPhone || "");
-        setInstaKey(data.instaKey || "");
-        setEmailUser(data.emailUser || "");
-        setEmailPass(data.emailPass || "");
-      }
-    });
-  }, [user]);
+    api.get("/platforms/settings").then(r => {
+      setStatus(r.data);
+      setEmailUser(r.data.emailUser || "");
+      setImapHost(r.data.imapHost || "imap.gmail.com");
+      setWhatsappPhoneId(r.data.whatsappPhoneId || "");
+    }).catch(console.error);
+  }, []);
 
-  const handleSave = async (platform: string) => {
-    if (!user) return;
-    setIsSaving(true);
+  const save = async (platform: string, payload: Record<string, string>) => {
+    setSaving(platform);
     try {
-      const update: any = { updatedAt: new Date().toISOString() };
-      if (platform === 'github') update.githubToken = githubToken;
-      if (platform === 'whatsapp') { update.whatsappKey = whatsappKey; update.whatsappPhone = whatsappPhone; }
-      if (platform === 'instagram') update.instaKey = instaKey;
-      if (platform === 'email') { update.emailUser = emailUser; update.emailPass = emailPass; }
-
-      await setDoc(doc(db, "users", user.uid), update, { merge: true });
-      setIsSaved(true);
-      setTimeout(() => setIsSaved(false), 2000);
-    } catch (error) {
-      console.error(error);
+      await api.post("/platforms/settings", payload);
+      setSaved(platform);
+      const r = await api.get("/platforms/settings");
+      setStatus(r.data);
+      setTimeout(() => setSaved(null), 2500);
+    } catch (err) {
+      console.error(err);
     } finally {
-      setIsSaving(false);
+      setSaving(null);
     }
   };
 
-  const platforms = [
-    { 
-      id: "whatsapp", 
-      name: "WhatsApp", 
-      icon: MessageCircle, 
-      desc: "Connect via Meta Business API or Twilio",
-      inputs: [
-        { label: "Phone Number ID", placeholder: "e.g. 1029384756", value: whatsappPhone, setter: setWhatsappPhone },
-        { label: "Permanent Token", placeholder: "EAAG...", value: whatsappKey, setter: setWhatsappKey, type: "password" }
-      ]
-    },
-    { 
-      id: "instagram", 
-      name: "Instagram", 
-      icon: Instagram, 
-      desc: "Requires Instagram Graph API Token",
-      inputs: [
-        { label: "Access Token", placeholder: "IGQV...", value: instaKey, setter: setInstaKey, type: "password" }
-      ]
-    },
-    { 
-      id: "telegram", 
-      name: "Telegram", 
-      icon: MessageSquare, 
-      desc: "Connect your bot via Telegram BotFather API",
-      inputs: [
-        { label: "Bot Token", placeholder: "123456:ABC-DEF...", value: githubToken.slice(0,0), setter: (v:string) => {}, type: "password" }
-      ]
-    },
-    { 
-      id: "email", 
-      name: "Email (SMTP/IMAP)", 
-      icon: Mail, 
-      desc: "Direct connection for automated client replies",
-      inputs: [
-        { label: "Email Address", placeholder: "you@company.com", value: emailUser, setter: setEmailUser },
-        { label: "App Password", placeholder: "xxxx xxxx xxxx xxxx", value: emailPass, setter: setEmailPass, type: "password" }
-      ]
+  const sync = async (platform: string) => {
+    setSyncState(s => ({ ...s, [platform]: "syncing" }));
+    try {
+      const r = await api.post(`/platforms/sync/${platform}`);
+      setSyncState(s => ({ ...s, [platform]: "done" }));
+      setTimeout(() => setSyncState(s => ({ ...s, [platform]: "idle" })), 3000);
+    } catch (err: any) {
+      setSyncState(s => ({ ...s, [platform]: "error" }));
+      setTimeout(() => setSyncState(s => ({ ...s, [platform]: "idle" })), 3000);
     }
-  ];
+  };
+
+  const StatusDot = ({ active }: { active?: boolean }) => (
+    <span className={`w-2 h-2 rounded-full inline-block ${active ? "bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.6)]" : "bg-white/20"}`} />
+  );
+
+  const SaveButton = ({ platform, onClick }: { platform: string; onClick: () => void }) => (
+    <button
+      onClick={onClick}
+      className={`p-4 rounded-2xl transition-all flex-shrink-0 ${saved === platform ? "bg-white text-black" : "bg-white/10 hover:bg-white/20 text-white"}`}
+    >
+      {saving === platform ? <Loader2 className="w-5 h-5 animate-spin" /> : saved === platform ? <Check className="w-5 h-5" /> : <Save className="w-5 h-5" />}
+    </button>
+  );
+
+  const SyncButton = ({ platform }: { platform: string }) => {
+    const state = syncState[platform] || "idle";
+    return (
+      <button
+        onClick={() => sync(platform)}
+        disabled={state === "syncing"}
+        className="flex items-center gap-2 px-4 py-2 glass rounded-xl text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-white transition-all disabled:opacity-40"
+      >
+        {state === "syncing" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+          state === "done" ? <Check className="w-3.5 h-3.5 text-green-400" /> :
+          state === "error" ? <AlertCircle className="w-3.5 h-3.5 text-red-400" /> :
+          <RefreshCw className="w-3.5 h-3.5" />}
+        {state === "done" ? "Synced" : state === "error" ? "Failed" : "Sync Now"}
+      </button>
+    );
+  };
 
   return (
-    <div className="space-y-12 pb-32">
-      {/* GitHub Section */}
-      <section className="glass p-10 rounded-[3rem] border-white/5 relative overflow-hidden group">
-        <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
+    <div className="space-y-10 pb-32">
+
+      {/* Snapchat Notice */}
+      <div className="glass-dark p-6 rounded-3xl border border-yellow-400/10 flex items-start gap-4">
+        <AlertCircle className="w-5 h-5 text-yellow-400/60 flex-shrink-0 mt-0.5" />
+        <p className="text-[11px] text-white/40 leading-relaxed">
+          <span className="text-yellow-400/80 font-black uppercase tracking-wider">Note:</span> Snapchat has no public API for reading chats. All other platforms below are fully supported.
+        </p>
+      </div>
+
+      {/* GitHub */}
+      <section className="glass p-10 rounded-[3rem] border-white/5 group">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
           <div className="flex items-center gap-6">
-            <div className="w-16 h-16 bg-white rounded-3xl flex items-center justify-center text-black shadow-[0_0_40px_rgba(255,255,255,0.1)] group-hover:scale-105 transition-transform duration-500">
+            <div className="w-16 h-16 bg-white rounded-3xl flex items-center justify-center text-black shadow-[0_0_40px_rgba(255,255,255,0.1)]">
               <Github className="w-8 h-8" />
             </div>
             <div>
-              <h3 className="font-black text-2xl tracking-tighter text-white uppercase italic">GitHub Hub</h3>
-              <p className="text-white/40 text-[11px] font-bold uppercase tracking-widest mt-1">Self-Healing Execution Key</p>
+              <div className="flex items-center gap-3 mb-1">
+                <h3 className="font-black text-2xl tracking-tighter text-white uppercase italic">GitHub</h3>
+                <StatusDot active={status?.hasGithub} />
+              </div>
+              <p className="text-white/30 text-[11px] font-bold uppercase tracking-widest">Personal Access Token · branch push & PR creation</p>
             </div>
           </div>
           <div className="flex-1 max-w-md w-full flex gap-3">
-            <input 
-              type="password" 
+            <input
+              type="password"
               value={githubToken}
-              onChange={(e) => setGithubToken(e.target.value)}
-              placeholder="Personal Access Token"
+              onChange={e => setGithubToken(e.target.value)}
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
               className="flex-1 bg-white/5 border border-white/10 px-6 py-4 rounded-2xl font-mono text-xs focus:outline-none focus:bg-white/10 transition-all placeholder:text-white/20"
             />
-            <button 
-              onClick={() => handleSave('github')}
-              className={`p-4 rounded-2xl transition-all ${isSaved ? 'bg-white text-black' : 'bg-white/10 text-white hover:bg-white/20'}`}
-            >
-              {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-            </button>
+            <SaveButton platform="github" onClick={() => save("github", { githubToken })} />
           </div>
         </div>
       </section>
 
-      {/* Other Platforms */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        {platforms.map((p) => (
-          <motion.div 
-            key={p.id}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass p-8 rounded-[2.5rem] border-white/10 flex flex-col h-full group card-hover relative overflow-hidden"
-          >
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-12 h-12 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-center text-white selection:bg-white selection:text-black">
-                <p.icon className="w-5 h-5" />
+      {/* Telegram */}
+      <motion.section initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass p-10 rounded-[3rem] border-white/5 group">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
+          <div className="flex items-center gap-6">
+            <div className="w-16 h-16 bg-white/5 border border-white/10 rounded-3xl flex items-center justify-center text-white">
+              <Send className="w-7 h-7" />
+            </div>
+            <div>
+              <div className="flex items-center gap-3 mb-1">
+                <h3 className="font-black text-xl tracking-tighter text-white uppercase italic">Telegram</h3>
+                <StatusDot active={status?.hasTelegram} />
               </div>
-              <h4 className="font-black text-sm uppercase tracking-widest">{p.name}</h4>
+              <p className="text-white/30 text-[11px] font-bold uppercase tracking-widest">Bot API · real-time polling · auto-categorization</p>
             </div>
-            
-            <p className="text-[11px] text-white/30 font-medium leading-relaxed mb-8">{p.desc}</p>
-
-            <div className="space-y-4 flex-1">
-              {p.inputs.map((input, idx) => (
-                <div key={idx} className="space-y-1.5">
-                  <label className="text-[9px] font-black uppercase tracking-widest text-white/20 px-1">{input.label}</label>
-                  <input 
-                    type={input.type || "text"}
-                    value={input.value}
-                    onChange={(e) => input.setter(e.target.value)}
-                    placeholder={input.placeholder}
-                    className="w-full bg-white/5 border border-white/5 hover:border-white/10 px-4 py-3.5 rounded-xl font-mono text-[10px] focus:outline-none focus:bg-white/10 transition-all placeholder:text-white/10"
-                  />
-                </div>
-              ))}
-            </div>
-
-            <button 
-              onClick={() => handleSave(p.id)}
-              className="mt-8 w-full bg-white/5 border border-white/10 py-4 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-white hover:text-black transition-all group-hover:border-white/20"
-            >
-              Initialize {p.name}
-            </button>
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Webhook Info */}
-      <div className="glass-dark p-12 rounded-[3.5rem] relative overflow-hidden">
-        <div className="relative z-10">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-2 h-2 bg-white rounded-full animate-pulse blur-[1px]" />
-            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-white/40">Real-time Endpoint</p>
           </div>
-          <h3 className="text-3xl font-black italic tracking-tighter text-white mb-4 uppercase">Direct Neural Hook</h3>
-          <p className="text-white/30 text-xs max-w-md leading-relaxed mb-10">
-            For WhatsApp and Instagram, configure your Meta Developer app to send webhooks to the address below. Our server will process them instantly.
-          </p>
-          
-          <div className="flex flex-col md:flex-row items-center gap-4 bg-black/40 border border-white/5 p-4 rounded-3xl backdrop-blur-2xl">
-            <div className="px-4 py-2 bg-white/10 rounded-xl text-[10px] font-black text-white/60 tracking-widest uppercase">POST</div>
-            <code className="text-[11px] font-mono text-white/40 select-all truncate">https://nexus-ai.app/api/webhooks/nexus-bridge</code>
-            <button className="ml-auto p-3 hover:bg-white/10 rounded-xl transition-colors">
-              <ExternalLink className="w-4 h-4 text-white/20" />
-            </button>
+          <div className="flex-1 max-w-md w-full flex gap-3">
+            <input
+              type="password"
+              value={telegramToken}
+              onChange={e => setTelegramToken(e.target.value)}
+              placeholder="1234567890:AABBCC..."
+              className="flex-1 bg-white/5 border border-white/10 px-6 py-4 rounded-2xl font-mono text-xs focus:outline-none focus:bg-white/10 transition-all placeholder:text-white/20"
+            />
+            <SaveButton platform="telegram" onClick={() => save("telegram", { telegramBotToken: telegramToken })} />
           </div>
         </div>
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-white/[0.02] blur-[150px] rounded-full translate-x-1/2 -translate-y-1/2" />
-      </div>
+        <p className="mt-4 text-[10px] text-white/20 pl-2">Create a bot via <span className="text-white/40">@BotFather</span> on Telegram and paste the token above. Messages will stream in automatically.</p>
+      </motion.section>
+
+      {/* WhatsApp */}
+      <motion.section initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass p-10 rounded-[3rem] border-white/5 group">
+        <div className="flex items-center gap-6 mb-8">
+          <div className="w-16 h-16 bg-white/5 border border-white/10 rounded-3xl flex items-center justify-center text-white">
+            <MessageCircle className="w-7 h-7" />
+          </div>
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <h3 className="font-black text-xl tracking-tighter text-white uppercase italic">WhatsApp</h3>
+              <StatusDot active={status?.hasWhatsapp} />
+            </div>
+            <p className="text-white/30 text-[11px] font-bold uppercase tracking-widest">Meta Business API · webhook + manual sync</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="space-y-2">
+            <label className="text-[9px] font-black uppercase tracking-widest text-white/20 px-1">Phone Number ID</label>
+            <input type="text" value={whatsappPhoneId} onChange={e => setWhatsappPhoneId(e.target.value)} placeholder="1029384756..." className="w-full bg-white/5 border border-white/5 hover:border-white/10 px-4 py-3.5 rounded-xl font-mono text-[11px] focus:outline-none focus:bg-white/10 transition-all placeholder:text-white/10" />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[9px] font-black uppercase tracking-widest text-white/20 px-1">Permanent Access Token</label>
+            <input type="password" value={whatsappToken} onChange={e => setWhatsappToken(e.target.value)} placeholder="EAAG..." className="w-full bg-white/5 border border-white/5 hover:border-white/10 px-4 py-3.5 rounded-xl font-mono text-[11px] focus:outline-none focus:bg-white/10 transition-all placeholder:text-white/10" />
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={() => save("whatsapp", { whatsappPhoneId, whatsappToken })} className={`flex items-center gap-2 px-6 py-3 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all ${saved === "whatsapp" ? "bg-white text-black" : "bg-white/10 hover:bg-white/20 text-white"}`}>
+            {saving === "whatsapp" ? <Loader2 className="w-4 h-4 animate-spin" /> : saved === "whatsapp" ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            Save
+          </button>
+          {status?.hasWhatsapp && <SyncButton platform="whatsapp" />}
+        </div>
+        <p className="mt-4 text-[10px] text-white/20 pl-1">Webhook URL: <code className="text-white/40">/api/platforms/webhook/whatsapp?userId=YOUR_UID</code></p>
+      </motion.section>
+
+      {/* Instagram */}
+      <motion.section initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass p-10 rounded-[3rem] border-white/5 group">
+        <div className="flex items-center gap-6 mb-8">
+          <div className="w-16 h-16 bg-white/5 border border-white/10 rounded-3xl flex items-center justify-center text-white">
+            <Instagram className="w-7 h-7" />
+          </div>
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <h3 className="font-black text-xl tracking-tighter text-white uppercase italic">Instagram</h3>
+              <StatusDot active={status?.hasInstagram} />
+            </div>
+            <p className="text-white/30 text-[11px] font-bold uppercase tracking-widest">Graph API · DM reading · webhook support</p>
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <input type="password" value={instaToken} onChange={e => setInstaToken(e.target.value)} placeholder="IGQV..." className="flex-1 bg-white/5 border border-white/10 px-6 py-4 rounded-2xl font-mono text-xs focus:outline-none focus:bg-white/10 transition-all placeholder:text-white/20" />
+          <SaveButton platform="instagram" onClick={() => save("instagram", { instaToken })} />
+          {status?.hasInstagram && <SyncButton platform="instagram" />}
+        </div>
+      </motion.section>
+
+      {/* Email */}
+      <motion.section initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass p-10 rounded-[3rem] border-white/5 group">
+        <div className="flex items-center gap-6 mb-8">
+          <div className="w-16 h-16 bg-white/5 border border-white/10 rounded-3xl flex items-center justify-center text-white">
+            <Mail className="w-7 h-7" />
+          </div>
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <h3 className="font-black text-xl tracking-tighter text-white uppercase italic">Email</h3>
+              <StatusDot active={status?.hasEmail} />
+            </div>
+            <p className="text-white/30 text-[11px] font-bold uppercase tracking-widest">IMAP · unread mail fetch · Gmail / Outlook / custom</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="space-y-2">
+            <label className="text-[9px] font-black uppercase tracking-widest text-white/20 px-1">Email Address</label>
+            <input type="text" value={emailUser} onChange={e => setEmailUser(e.target.value)} placeholder="you@gmail.com" className="w-full bg-white/5 border border-white/5 hover:border-white/10 px-4 py-3.5 rounded-xl font-mono text-[11px] focus:outline-none focus:bg-white/10 transition-all placeholder:text-white/10" />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[9px] font-black uppercase tracking-widest text-white/20 px-1">App Password</label>
+            <input type="password" value={emailPass} onChange={e => setEmailPass(e.target.value)} placeholder="xxxx xxxx xxxx xxxx" className="w-full bg-white/5 border border-white/5 hover:border-white/10 px-4 py-3.5 rounded-xl font-mono text-[11px] focus:outline-none focus:bg-white/10 transition-all placeholder:text-white/10" />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[9px] font-black uppercase tracking-widest text-white/20 px-1">IMAP Host</label>
+            <input type="text" value={imapHost} onChange={e => setImapHost(e.target.value)} placeholder="imap.gmail.com" className="w-full bg-white/5 border border-white/5 hover:border-white/10 px-4 py-3.5 rounded-xl font-mono text-[11px] focus:outline-none focus:bg-white/10 transition-all placeholder:text-white/10" />
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={() => save("email", { emailUser, emailPass, imapHost })} className={`flex items-center gap-2 px-6 py-3 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all ${saved === "email" ? "bg-white text-black" : "bg-white/10 hover:bg-white/20 text-white"}`}>
+            {saving === "email" ? <Loader2 className="w-4 h-4 animate-spin" /> : saved === "email" ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            Save
+          </button>
+          {status?.hasEmail && <SyncButton platform="email" />}
+        </div>
+        <p className="mt-4 text-[10px] text-white/20 pl-1">For Gmail, use an <span className="text-white/40">App Password</span> (not your main password). Enable IMAP in Gmail settings first.</p>
+      </motion.section>
+
     </div>
   );
 }
